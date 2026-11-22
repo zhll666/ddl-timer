@@ -78,10 +78,12 @@ GitHub：[zhll666/ddl-timer](https://github.com/zhll666/ddl-timer) · [下载 Re
 
 这不是保存失败——**被拦截时程序根本没有启动，所以不会生成 `data.txt`**。处理方式：
 
+> GitHub Release 为兼容性使用 ASCII 资源名 **`ddl-timer.exe`**；本地构建输出仍是 `ddl计时器.exe`。
+
 1. 点击提示里的 **「更多信息」**，再点 **「仍要运行」**。
 2. 如果文件是从网络下载的，右键 exe → **属性** → 勾选 **解除锁定**；或在 PowerShell 执行：
    ```powershell
-   Unblock-File .\ddl计时器.exe
+   Unblock-File .\ddl-timer.exe
    ```
 3. 如果 Windows 11 的 **Smart App Control** 仍然直接拦截、没有「仍要运行」，请从源码构建：
    ```powershell

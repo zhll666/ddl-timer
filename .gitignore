@@ -1,0 +1,17 @@
+# build output
+*.exe
+*.pdb
+*.dll
+
+# local runtime data
+data.txt
+data.txt.bak
+data.txt.corrupt-*
+*.tmp
+
+# IDE / OS
+.vs/
+bin/
+obj/
+Thumbs.db
+desktop.ini

@@ -29,6 +29,7 @@ namespace ChronoRuler
             DrawHeader(g);
             DrawProjectRuler(g);
             DrawTimeline(g);
+            DrawHorizontalScroll(g);
             DrawFooter(g);
             DrawToast(g);
             DrawWindowBorder(g);
@@ -224,6 +225,7 @@ namespace ChronoRuler
             {
                 Project p = _data.Projects[i];
                 Rectangle col = _colRects[i];
+                if (col.IsEmpty) continue;
                 Rectangle head = new Rectangle(col.X, _rRuler.Top, col.Width, _rRuler.Height);
                 Color color = ProjectColor(p);
                 bool hover = Hover(head);
@@ -323,12 +325,12 @@ namespace ChronoRuler
 
         private int LabelStepMinutes()
         {
-            int[] steps = { 1, 2, 5, 10, 15, 30, 60, 120 };
+            int[] steps = { 1, 2, 5, 10, 15, 30, 60, 120, 240, 360, 720, 1440 };
             for (int i = 0; i < steps.Length; i++)
             {
                 if (_pxh * steps[i] / 60f >= Ui.D(46)) return steps[i];
             }
-            return 120;
+            return 1440;
         }
 
         private int TickMinutes()
@@ -336,7 +338,10 @@ namespace ChronoRuler
             if (_pxh >= 300f) return 1;
             if (_pxh >= 130f) return 5;
             if (_pxh >= 45f) return 15;
-            return 60;
+            if (_pxh >= 20f) return 60;
+            if (_pxh >= 8f) return 180;
+            if (_pxh >= 4f) return 360;
+            return 720;
         }
 
         private DateTime FirstFutureTick(DateTime top, int step)
@@ -438,6 +443,7 @@ namespace ChronoRuler
             for (int i = 0; i < _data.Projects.Count; i++)
             {
                 Rectangle col = _colRects[i];
+                if (col.IsEmpty) continue;
                 Color color = ProjectColor(_data.Projects[i]);
                 using (SolidBrush b = new SolidBrush(Ui.Alpha(color, 6)))
                     g.FillRectangle(b, col);
@@ -514,6 +520,7 @@ namespace ChronoRuler
             {
                 Project p = _data.Projects[i];
                 Rectangle col = _colRects[i];
+                if (col.IsEmpty) continue;
                 Color color = ProjectColor(p);
                 long remain = p.EndAt - nowMs;
                 float x = col.X + Ui.D(18);
@@ -652,7 +659,8 @@ namespace ChronoRuler
                     "   ·   滚轮继续 / 回到现在";
             }
             Gfx.TextL(g, hint, Fonts.Tiny, Pal.Muted,
-                new RectangleF(Ui.D(22), _rFooter.Top, Ui.D(600), _rFooter.Height));
+                new RectangleF(Ui.D(22), _rFooter.Top,
+                    Math.Max(Ui.D(200), _rFollow.Left - Ui.D(34)), _rFooter.Height));
 
             bool followHover = Hover(_rFollow);
             bool followActive = _follow;
@@ -667,6 +675,42 @@ namespace ChronoRuler
                 new RectangleF(_rFollow.X + Ui.D(24), _rFollow.Y, _rFollow.Width - Ui.D(30), _rFollow.Height));
 
             DrawVerticalScaleSlider(g);
+        }
+
+        private void DrawHorizontalScroll(Graphics g)
+        {
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(250, 11, 15, 22)))
+                g.FillRectangle(b, _rHScroll);
+            Gfx.HLine(g, 0, ClientSize.Width, _rHScroll.Top, Color.FromArgb(220, 27, 34, 47), 1);
+
+            int n = _data.Projects.Count;
+            int visible = Math.Min(n, VisibleProjects);
+            string label = n == 0
+                ? "项目 0/0"
+                : "项目 " + (_firstProject + 1) + "-" + (_firstProject + visible) + "/" + n;
+            Gfx.TextL(g, label, Fonts.Tiny, Pal.Muted,
+                new RectangleF(Ui.D(10), _rHScroll.Top, _gutterW - Ui.D(16), _rHScroll.Height));
+
+            Rectangle track = _rHScrollTrack;
+            Gfx.FillRound(g, new RectangleF(track.X, track.Y, track.Width, track.Height),
+                track.Height / 2f, Color.FromArgb(70, 62, 74, 96));
+
+            bool active = HScrollActive;
+            if (active)
+            {
+                bool hover = Hover(_rHScrollThumb) || _hSliderDragging;
+                Rectangle thumb = _rHScrollThumb;
+                Gfx.FillRound(g, thumb, thumb.Height / 2f,
+                    hover ? Color.FromArgb(245, 36, 46, 64) : Color.FromArgb(235, 28, 36, 50));
+                Gfx.StrokeRound(g, thumb, thumb.Height / 2f,
+                    Ui.Alpha(Pal.Accent, hover ? 235 : 155), 1f);
+                for (int i = -1; i <= 1; i++)
+                {
+                    float gx = thumb.X + thumb.Width / 2f + i * Ui.D(4);
+                    using (Pen p = new Pen(Ui.Alpha(Pal.Accent, hover ? 220 : 150), 1f))
+                        g.DrawLine(p, gx, thumb.Y + Ui.D(4), gx, thumb.Bottom - Ui.D(4));
+                }
+            }
         }
 
         private void DrawVerticalScaleSlider(Graphics g)
@@ -707,7 +751,7 @@ namespace ChronoRuler
             Gfx.StrokeRound(g, thumb, thumb.Width / 2f, Ui.Alpha(Pal.Accent, 230), 1.6f);
             Gfx.Dot(g, thumb.X + thumb.Width / 2f, thumb.Y + thumb.Height / 2f, 2.4f, Pal.Accent);
 
-            string val = ((int)Math.Round(_pxh)) + "px/h";
+            string val = VisibleSpanLabel();
             Gfx.TextR(g, val, Fonts.Tiny, hover ? Pal.Text : Pal.Dim,
                 new RectangleF(group.Right - Ui.D(60), group.Y, Ui.D(58), group.Height));
         }

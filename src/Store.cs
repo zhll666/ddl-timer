@@ -263,8 +263,8 @@ namespace ChronoRuler
             {
                 data.PxHour = data.Zoom == 0 ? 24 : (data.Zoom == 1 ? 120 : 400);
             }
-            if (data.PxHour < 12) data.PxHour = 12;
-            if (data.PxHour > 520) data.PxHour = 520;
+            if (data.PxHour < 1) data.PxHour = 1;
+            if (data.PxHour > 2000) data.PxHour = 2000;
         }
 
         public static bool Save(AppData data)

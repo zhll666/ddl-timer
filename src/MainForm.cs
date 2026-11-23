@@ -53,12 +53,20 @@ namespace ChronoRuler
         private Rectangle _rSliderGroup;
         private Rectangle _rSliderTrack;
         private Rectangle _rSliderThumb;
+        private Rectangle _rHScroll;
+        private Rectangle _rHScrollTrack;
+        private Rectangle _rHScrollThumb;
+        private bool _hSliderDragging;
+        private int _hDragOffset;
+        private int _firstProject;
         private int _gutterW;
         private int _colX0;
         private int _colRight;
         private List<Rectangle> _colRects = new List<Rectangle>();
         private float _pxh = 120f;
         private double _scrollY;
+
+        private const int VisibleProjects = 7;
 
         private const int ResizeBorder = 6;
         private const int WM_NCHITTEST = 0x0084;
@@ -126,6 +134,7 @@ namespace ChronoRuler
         {
             base.OnShown(e);
             MaxmizeBoundsForScreen();
+            _pxh = (float)_data.PxHour;
             ComputeLayout();
             ExpireProjects(true);
             if (_follow) _scrollY = 0;
@@ -207,12 +216,15 @@ namespace ChronoRuler
             int headerH = Ui.D(148);
             int rulerH = Ui.D(74);
             int footerH = Ui.D(38);
+            int hbarH = Ui.D(22);
 
             _rTitle = new Rectangle(0, 0, w, titleH);
             _rHeader = new Rectangle(0, titleH, w, headerH);
             _rRuler = new Rectangle(0, _rHeader.Bottom, w, rulerH);
             _rFooter = new Rectangle(0, h - footerH, w, footerH);
-            _rTimeline = new Rectangle(0, _rRuler.Bottom, w, Math.Max(0, _rFooter.Top - _rRuler.Bottom));
+            _rTimeline = new Rectangle(0, _rRuler.Bottom, w,
+                Math.Max(0, _rFooter.Top - _rRuler.Bottom - hbarH));
+            _rHScroll = new Rectangle(0, _rTimeline.Bottom, w, hbarH);
 
             _gutterW = Ui.D(96);
             _rGutter = new Rectangle(0, _rTimeline.Top, _gutterW, _rTimeline.Height);
@@ -235,34 +247,50 @@ namespace ChronoRuler
             int newW = Ui.D(132);
             _rNew = new Rectangle(w - pad - newW, _rHeader.Top + Ui.D(66), newW, Ui.D(44));
 
-            int sliderW = Ui.D(264);
+            int sliderW = Ui.D(332);
             int sliderH = Ui.D(26);
             _rSliderGroup = new Rectangle(w - pad - sliderW, _rFooter.Top + (footerH - sliderH) / 2,
                 sliderW, sliderH);
             _rFollow = new Rectangle(_rSliderGroup.Left - Ui.D(16) - Ui.D(92),
                 _rFooter.Top + (footerH - sliderH) / 2, Ui.D(92), sliderH);
             _rSliderTrack = new Rectangle(_rSliderGroup.X + Ui.D(66), _rSliderGroup.Y + Ui.D(12),
-                Ui.D(136), Ui.D(4));
+                Ui.D(204), Ui.D(4));
 
-            // columns
+            // fixed 7 project slots; no placeholders when fewer than 7
             _colRects.Clear();
             int n = _data.Projects.Count;
-            if (n > 0)
+            int span = _colRight - _colX0;
+            int maxFirst = Math.Max(0, n - VisibleProjects);
+            if (_firstProject < 0) _firstProject = 0;
+            if (_firstProject > maxFirst) _firstProject = maxFirst;
+            for (int i = 0; i < n; i++) _colRects.Add(Rectangle.Empty);
+            int visible = Math.Min(n, VisibleProjects);
+            for (int slot = 0; slot < visible; slot++)
             {
-                int span = _colRight - _colX0;
-                int prev = 0;
-                for (int i = 0; i < n; i++)
-                {
-                    int next = (int)Math.Round((double)span * (i + 1) / n);
-                    Rectangle cr = new Rectangle(_colX0 + prev, _rTimeline.Top, next - prev, _rTimeline.Height);
-                    _colRects.Add(cr);
-                    prev = next;
-                }
+                int idx = _firstProject + slot;
+                int x1 = _colX0 + (int)Math.Round((double)span * slot / VisibleProjects);
+                int x2 = _colX0 + (int)Math.Round((double)span * (slot + 1) / VisibleProjects);
+                _colRects[idx] = new Rectangle(x1, _rTimeline.Top,
+                    Math.Max(1, x2 - x1), _rTimeline.Height);
             }
+
+            int hTrackW = Math.Max(Ui.D(40), _colRight - _colX0 - Ui.D(16));
+            _rHScrollTrack = new Rectangle(_colX0 + Ui.D(8),
+                _rHScroll.Top + (_rHScroll.Height - Ui.D(5)) / 2, hTrackW, Ui.D(5));
+            int hThumbW = hTrackW;
+            if (n > VisibleProjects)
+                hThumbW = Math.Max(Ui.D(40),
+                    (int)Math.Round(hTrackW * VisibleProjects / (double)n));
+            int hThumbX = _rHScrollTrack.X;
+            if (maxFirst > 0)
+                hThumbX += (int)Math.Round((_rHScrollTrack.Width - hThumbW) *
+                    (_firstProject / (double)maxFirst));
+            _rHScrollThumb = new Rectangle(hThumbX, _rHScroll.Top + (_rHScroll.Height - Ui.D(14)) / 2,
+                hThumbW, Ui.D(14));
 
             float minPx = MinPxHour;
             if (_pxh < minPx) _pxh = minPx;
-            if (_pxh > 520f) _pxh = 520f;
+            if (_pxh > MaxPxHour) _pxh = MaxPxHour;
 
             if (_follow) _scrollY = 0;
             if (_scrollY < 0) _scrollY = 0;
@@ -282,17 +310,30 @@ namespace ChronoRuler
             _rEmptyNew = new Rectangle(cx + Ui.D(32), cy + emptyH - Ui.D(79), Ui.D(148), Ui.D(40));
         }
 
+        private float UsableHeight
+        {
+            get { return Math.Max(1f, _rTimeline.Height - Ui.D(24)); }
+        }
+
         private float MinPxHour
         {
-            get { return Math.Max(12f, (_rTimeline.Height - Ui.D(24)) / 24f); }
+            // One screen shows 7 days at the smallest zoom.
+            get { return Math.Max(1f, UsableHeight / (24f * 7f)); }
+        }
+
+        private float MaxPxHour
+        {
+            // One screen shows 1 hour at the largest zoom.
+            get { return Math.Max(MinPxHour + 0.5f, UsableHeight); }
         }
 
         private float SliderT(float px)
         {
             float min = MinPxHour;
+            float max = MaxPxHour;
             if (px <= min) return 0f;
-            if (px >= 520f) return 1f;
-            return (float)(Math.Log(px / min) / Math.Log(520.0 / min));
+            if (px >= max) return 1f;
+            return (float)(Math.Log(px / min) / Math.Log(max / min));
         }
 
         private float SliderPx(float t)
@@ -300,7 +341,19 @@ namespace ChronoRuler
             if (t < 0f) t = 0f;
             if (t > 1f) t = 1f;
             float min = MinPxHour;
-            return (float)(min * Math.Pow(520.0 / min, t));
+            return (float)(min * Math.Pow(MaxPxHour / min, t));
+        }
+
+        private string VisibleSpanLabel()
+        {
+            double hours = UsableHeight / _pxh;
+            if (hours >= 24.0)
+            {
+                double days = hours / 24.0;
+                return days >= 6.95 ? "7天" : days.ToString("0.#") + "天";
+            }
+            if (hours >= 1.0) return hours.ToString("0.#") + "时";
+            return Math.Max(1, (int)Math.Round(hours * 60.0)) + "分";
         }
 
         private float YFor(DateTime t)
@@ -429,6 +482,7 @@ namespace ChronoRuler
                     SaveData();
                     _follow = true;
                     _scrollY = 0;
+                    _firstProject = Math.Max(0, _data.Projects.Count - VisibleProjects);
                     ComputeLayout();
                     ShowToast("已创建 " + p.Name + " · 截止 " + EndLabel(p.EndAt),
                         ProjectColor(p));
@@ -497,12 +551,11 @@ namespace ChronoRuler
         {
             float min = MinPxHour;
             if (px < min) px = min;
-            if (px > 520f) px = 520f;
+            if (px > MaxPxHour) px = MaxPxHour;
             if (Math.Abs(px - _pxh) < 0.05f) return;
 
-            double anchor = 0;
-            if (_pxh > 0 && _rTimeline.Height > 0)
-                anchor = (_scrollY + _rTimeline.Height * 0.5) / _pxh;
+            // Zoom is anchored to the top edge: the time at the top stays put.
+            double topHours = _pxh > 0 ? _scrollY / _pxh : 0;
             _pxh = px;
             ComputeLayout();
             if (_follow)
@@ -511,7 +564,7 @@ namespace ChronoRuler
             }
             else
             {
-                _scrollY = Math.Max(0, anchor * _pxh - _rTimeline.Height * 0.5);
+                _scrollY = Math.Max(0, topHours * _pxh);
             }
             if (persist) SaveData();
             Invalidate();
@@ -528,8 +581,8 @@ namespace ChronoRuler
         private void SetScalePreset(int preset)
         {
             if (preset == 0) SetScale(MinPxHour, true);
-            else if (preset == 1) SetScale(120f, true);
-            else SetScale(400f, true);
+            else if (preset == 1) SetScale(UsableHeight / 24f, true);
+            else SetScale(MaxPxHour, true);
         }
 
         private void ToggleFollow()
@@ -590,6 +643,54 @@ namespace ChronoRuler
             return hit.Contains(p) || _rSliderThumb.Contains(p);
         }
 
+        private bool HScrollActive
+        {
+            get { return _data.Projects.Count > VisibleProjects; }
+        }
+
+        private bool HitHScrollThumb(Point p)
+        {
+            return HScrollActive && _rHScrollThumb.Contains(p);
+        }
+
+        private bool HitHScrollTrack(Point p)
+        {
+            if (!HScrollActive) return false;
+            Rectangle hit = new Rectangle(_rHScrollTrack.X, _rHScrollTrack.Y - Ui.D(8),
+                _rHScrollTrack.Width, _rHScrollTrack.Height + Ui.D(16));
+            return hit.Contains(p);
+        }
+
+        private void SetFirstFromSliderX(int x, bool centerThumb)
+        {
+            int maxFirst = Math.Max(0, _data.Projects.Count - VisibleProjects);
+            if (maxFirst <= 0)
+            {
+                _firstProject = 0;
+                return;
+            }
+            int thumbW = _rHScrollThumb.Width;
+            int avail = Math.Max(1, _rHScrollTrack.Width - thumbW);
+            float left = x - _rHScrollTrack.X - (centerThumb ? thumbW / 2f : 0f);
+            float t = left / avail;
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
+            _firstProject = (int)Math.Round(t * maxFirst);
+            ComputeLayout();
+            Invalidate();
+        }
+
+        private void ScrollProjects(int delta)
+        {
+            int maxFirst = Math.Max(0, _data.Projects.Count - VisibleProjects);
+            if (maxFirst <= 0) return;
+            _firstProject += delta;
+            if (_firstProject < 0) _firstProject = 0;
+            if (_firstProject > maxFirst) _firstProject = maxFirst;
+            ComputeLayout();
+            Invalidate();
+        }
+
         // ---------------------------------------------------------------- input
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -628,11 +729,18 @@ namespace ChronoRuler
                 return;
             }
 
+            if (_hSliderDragging)
+            {
+                SetFirstFromSliderX(e.X - _hDragOffset, false);
+                return;
+            }
+
             Cursor c = Cursors.Default;
             if (_rBtnMin.Contains(e.Location) || _rBtnMax.Contains(e.Location) || _rBtnClose.Contains(e.Location)) c = Cursors.Hand;
             else if (_rNew.Contains(e.Location)) c = Cursors.Hand;
             else if (_data.Projects.Count == 0 && _rEmptyNew.Contains(e.Location)) c = Cursors.Hand;
             else if (_rFollow.Contains(e.Location)) c = Cursors.Hand;
+            else if (HitHScrollThumb(e.Location) || HitHScrollTrack(e.Location)) c = Cursors.Hand;
             else if (HitSlider(e.Location)) c = Cursors.Hand;
             else if (InContent(e.Location)) c = Cursors.SizeNS;
             Cursor = c;
@@ -688,6 +796,21 @@ namespace ChronoRuler
                 ToggleFollow();
                 return;
             }
+            if (HitHScrollThumb(e.Location))
+            {
+                _hSliderDragging = true;
+                _hDragOffset = e.X - _rHScrollThumb.X;
+                Capture = true;
+                return;
+            }
+            if (HitHScrollTrack(e.Location))
+            {
+                SetFirstFromSliderX(e.X, true);
+                _hSliderDragging = true;
+                _hDragOffset = _rHScrollThumb.Width / 2;
+                Capture = true;
+                return;
+            }
             if (HitSlider(e.Location))
             {
                 _sliderDragging = true;
@@ -736,6 +859,11 @@ namespace ChronoRuler
                 Capture = false;
                 SaveData();
             }
+            if (_hSliderDragging)
+            {
+                _hSliderDragging = false;
+                Capture = false;
+            }
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -760,6 +888,17 @@ namespace ChronoRuler
             base.OnMouseWheel(e);
             if ((ModifierKeys & Keys.Control) == Keys.Control)
             {
+                SetScale(_pxh * (e.Delta > 0 ? 1.15f : 0.87f), true);
+                return;
+            }
+            if (_rHScroll.Contains(e.Location) && HScrollActive)
+            {
+                ScrollProjects(e.Delta > 0 ? -1 : 1);
+                return;
+            }
+            if (_rSliderGroup.Contains(e.Location) || HitSlider(e.Location))
+            {
+                // Wheel over the vertical scale lets you zoom without Ctrl.
                 SetScale(_pxh * (e.Delta > 0 ? 1.15f : 0.87f), true);
                 return;
             }

@@ -651,7 +651,7 @@ namespace ChronoRuler
             }
             else if (_follow)
             {
-                hint = "滚轮向下浏览未来   ·   按住图表上下拖动   ·   右下滑块调纵轴";
+                hint = "剩余升序   ·   滚轮向下浏览   ·   按住图表拖动   ·   右下缩放";
             }
             else
             {

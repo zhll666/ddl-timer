@@ -226,7 +226,11 @@ namespace ChronoRuler
 
             list.Sort(delegate(Project a, Project b)
             {
-                int c = a.Ordinal.CompareTo(b.Ordinal);
+                // Remaining time order is deadline order: every project is
+                // measured against the same current time.
+                int c = a.EndAt.CompareTo(b.EndAt);
+                if (c != 0) return c;
+                c = a.Ordinal.CompareTo(b.Ordinal);
                 if (c != 0) return c;
                 return a.Created.CompareTo(b.Created);
             });

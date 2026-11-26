@@ -19,10 +19,6 @@ namespace ChronoRuler
 
         private Point _mouse = new Point(-1000, -1000);
         private bool _mouseInside;
-        private bool _draggingWindow;
-        private bool _dragMoved;
-        private Point _dragScreenStart;
-        private Point _dragFormStart;
 
         private bool _draggingChart;
         private float _dragChartStartY;
@@ -33,6 +29,9 @@ namespace ChronoRuler
         private Color _toastColor;
         private long _toastUntil;
         private int _toastSeq;
+        private long _lastTitleToggle;
+        private long _lastCaptionClickTick;
+        private Point _lastCaptionClickPoint = new Point(-10000, -10000);
 
         // layout (device pixels)
         private Rectangle _rTitle;
@@ -70,6 +69,35 @@ namespace ChronoRuler
 
         private const int ResizeBorder = 6;
         private const int WM_NCHITTEST = 0x0084;
+        private const int WM_NCLBUTTONDOWN = 0x00A1;
+        private const int WM_NCLBUTTONDBLCLK = 0x00A3;
+        private const int WM_SYSCOMMAND = 0x0112;
+        private const int SC_MAXIMIZE = 0xF030;
+        private const int HTCAPTION = 2;
+        private const int HTMAXBUTTON = 9;
+        private const int WS_MAXIMIZEBOX = 0x00010000;
+        private const int WS_MINIMIZEBOX = 0x00020000;
+        private const int WS_THICKFRAME = 0x00040000;
+        private const int WS_SYSMENU = 0x00080000;
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                // Let Windows treat the borderless window as a normal
+                // resizable window, which enables Aero Snap, Win+Arrow,
+                // and the Windows 11 Snap Layouts flyout.
+                cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
+                return cp;
+            }
+        }
 
         public MainForm(string screenshotPath)
         {
@@ -422,6 +450,15 @@ namespace ChronoRuler
                 _data.Projects[i].Ordinal = i + 1;
         }
 
+        private void ShowProjectPage(Project p)
+        {
+            if (p == null) return;
+            int index = _data.Projects.IndexOf(p);
+            if (index < 0) return;
+            int maxFirst = Math.Max(0, _data.Projects.Count - VisibleProjects);
+            _firstProject = Math.Max(0, Math.Min(index, maxFirst));
+        }
+
         private int ExpireProjects(bool notify)
         {
             if (_data == null || _data.Projects.Count == 0) return 0;
@@ -482,7 +519,7 @@ namespace ChronoRuler
                     SaveData();
                     _follow = true;
                     _scrollY = 0;
-                    _firstProject = Math.Max(0, _data.Projects.Count - VisibleProjects);
+                    ShowProjectPage(p);
                     ComputeLayout();
                     ShowToast("已创建 " + p.Name + " · 截止 " + EndLabel(p.EndAt),
                         ProjectColor(p));
@@ -525,6 +562,8 @@ namespace ChronoRuler
                     p.Color = dlg.SelectedColor.ToArgb();
                     p.EndAt = Ui.ToMs(dlg.EndValue);
                     SaveData();
+                    ShowProjectPage(p);
+                    ComputeLayout();
                     ShowToast(p.Name + " · 截止 " + EndLabel(p.EndAt), ProjectColor(p));
                     Invalidate();
                 }
@@ -699,19 +738,6 @@ namespace ChronoRuler
             _mouse = e.Location;
             _mouseInside = true;
 
-            if (_draggingWindow)
-            {
-                Point screen = Cursor.Position;
-                int dx = screen.X - _dragScreenStart.X;
-                int dy = screen.Y - _dragScreenStart.Y;
-                if (!_dragMoved && Math.Abs(dx) + Math.Abs(dy) > 3) _dragMoved = true;
-                if (_dragMoved && WindowState == FormWindowState.Normal)
-                {
-                    Location = new Point(_dragFormStart.X + dx, _dragFormStart.Y + dy);
-                }
-                return;
-            }
-
             if (_draggingChart)
             {
                 double next = _dragChartStartScroll + (_dragChartStartY - e.Y);
@@ -776,11 +802,6 @@ namespace ChronoRuler
                 WindowState = FormWindowState.Minimized;
                 return;
             }
-            if (_rBtnMax.Contains(e.Location))
-            {
-                ToggleMaximize();
-                return;
-            }
             if (_rNew.Contains(e.Location))
             {
                 NewProject();
@@ -828,14 +849,8 @@ namespace ChronoRuler
             }
             if (_rTitle.Contains(e.Location) && !HitTitleBarButton(e.Location))
             {
-                if (WindowState == FormWindowState.Normal)
-                {
-                    _draggingWindow = true;
-                    _dragMoved = false;
-                    _dragScreenStart = Cursor.Position;
-                    _dragFormStart = Location;
-                    Capture = true;
-                }
+                ReleaseCapture();
+                SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
                 return;
             }
         }
@@ -843,11 +858,6 @@ namespace ChronoRuler
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
-            if (_draggingWindow)
-            {
-                _draggingWindow = false;
-                Capture = false;
-            }
             if (_draggingChart)
             {
                 _draggingChart = false;
@@ -872,7 +882,7 @@ namespace ChronoRuler
             if (e.Button != MouseButtons.Left) return;
             if (_rTitle.Contains(e.Location) && !HitTitleBarButton(e.Location))
             {
-                ToggleMaximize();
+                ToggleMaximizeFromTitle();
                 return;
             }
             int header = HeaderAt(e.Location);
@@ -944,6 +954,14 @@ namespace ChronoRuler
                 SetScalePreset(2);
                 e.Handled = true;
             }
+        }
+
+        private void ToggleMaximizeFromTitle()
+        {
+            long now = NowTick();
+            if (now - _lastTitleToggle < 300) return;
+            _lastTitleToggle = now;
+            ToggleMaximize();
         }
 
         private void ToggleMaximize()
@@ -1019,7 +1037,46 @@ namespace ChronoRuler
 
         protected override void WndProc(ref Message m)
         {
-            if (m.Msg == WM_NCHITTEST && WindowState == FormWindowState.Normal)
+            if (m.Msg == WM_NCLBUTTONDOWN && (int)m.WParam == HTMAXBUTTON)
+            {
+                ToggleMaximize();
+                return;
+            }
+
+            if (m.Msg == WM_NCLBUTTONDOWN && (int)m.WParam == HTCAPTION)
+            {
+                long lp = m.LParam.ToInt64();
+                int sx = unchecked((short)(lp & 0xFFFF));
+                int sy = unchecked((short)((lp >> 16) & 0xFFFF));
+                Point p = PointToClient(new Point(sx, sy));
+                long now = NowTick();
+                Size ds = SystemInformation.DoubleClickSize;
+                bool doubleClick = now - _lastCaptionClickTick <= SystemInformation.DoubleClickTime &&
+                    Math.Abs(p.X - _lastCaptionClickPoint.X) <= Math.Max(2, ds.Width / 2) &&
+                    Math.Abs(p.Y - _lastCaptionClickPoint.Y) <= Math.Max(2, ds.Height / 2);
+                _lastCaptionClickTick = now;
+                _lastCaptionClickPoint = p;
+                if (doubleClick)
+                {
+                    _lastCaptionClickTick = 0;
+                    ToggleMaximizeFromTitle();
+                    return;
+                }
+            }
+
+            if (m.Msg == WM_NCLBUTTONDBLCLK && (int)m.WParam == HTCAPTION)
+            {
+                ToggleMaximizeFromTitle();
+                return;
+            }
+
+            if (m.Msg == WM_SYSCOMMAND &&
+                (((int)m.WParam & 0xFFF0) == SC_MAXIMIZE))
+            {
+                MaxmizeBoundsForScreen();
+            }
+
+            if (m.Msg == WM_NCHITTEST)
             {
                 base.WndProc(ref m);
                 if (m.Result == (IntPtr)1)
@@ -1028,19 +1085,31 @@ namespace ChronoRuler
                     int sx = unchecked((short)(lp & 0xFFFF));
                     int sy = unchecked((short)((lp >> 16) & 0xFFFF));
                     Point p = PointToClient(new Point(sx, sy));
-                    int b = Ui.D(ResizeBorder);
-                    bool left = p.X < b;
-                    bool right = p.X >= ClientSize.Width - b;
-                    bool top = p.Y < b;
-                    bool bottom = p.Y >= ClientSize.Height - b;
-                    if (left && top) m.Result = (IntPtr)13;
-                    else if (right && top) m.Result = (IntPtr)14;
-                    else if (left && bottom) m.Result = (IntPtr)16;
-                    else if (right && bottom) m.Result = (IntPtr)17;
-                    else if (left) m.Result = (IntPtr)10;
-                    else if (right) m.Result = (IntPtr)11;
-                    else if (top) m.Result = (IntPtr)12;
-                    else if (bottom) m.Result = (IntPtr)15;
+
+                    // Expose the custom maximize button as a native caption
+                    // button so Windows 11 can show Snap Layouts on hover.
+                    if (_rBtnMax.Contains(p))
+                    {
+                        m.Result = (IntPtr)HTMAXBUTTON;
+                        return;
+                    }
+
+                    if (WindowState == FormWindowState.Normal)
+                    {
+                        int b = Ui.D(ResizeBorder);
+                        bool left = p.X < b;
+                        bool right = p.X >= ClientSize.Width - b;
+                        bool top = p.Y < b;
+                        bool bottom = p.Y >= ClientSize.Height - b;
+                        if (left && top) m.Result = (IntPtr)13;
+                        else if (right && top) m.Result = (IntPtr)14;
+                        else if (left && bottom) m.Result = (IntPtr)16;
+                        else if (right && bottom) m.Result = (IntPtr)17;
+                        else if (left) m.Result = (IntPtr)10;
+                        else if (right) m.Result = (IntPtr)11;
+                        else if (top) m.Result = (IntPtr)12;
+                        else if (bottom) m.Result = (IntPtr)15;
+                    }
                 }
                 return;
             }
